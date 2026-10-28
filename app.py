@@ -1,11 +1,23 @@
 import os
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from openai import OpenAI
 from pydantic import BaseModel, Field
+from journal_api import router as journal_api_router
 
 app = FastAPI(title="Travel Journal AI")
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["POST", "GET"], allow_headers=["*"])
+allowed_origins = [origin.strip() for origin in os.environ.get("API_ALLOWED_ORIGINS", "").split(",") if origin.strip()]
+app.add_middleware(CORSMiddleware, allow_origins=allowed_origins, allow_methods=["POST", "GET"], allow_headers=["Content-Type", "Authorization", "Idempotency-Key", "X-Journal-Token"])
+app.include_router(journal_api_router)
+
+@app.middleware("http")
+async def limit_journal_api_request_size(request: Request, call_next):
+    if request.url.path.startswith("/v1/notes"):
+        length = request.headers.get("content-length")
+        if length and int(length) > 25_000:
+            return JSONResponse(status_code=413, content={"detail": "Request body is too large."})
+    return await call_next(request)
 
 class JournalRequest(BaseModel):
     entries: list[str] = Field(min_length=1, max_length=200)
